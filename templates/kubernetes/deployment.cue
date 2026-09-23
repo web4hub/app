@@ -1,0 +1,5 @@
+deployment.yaml
+service.yaml
+ingress.yaml
+configmap.yaml
+secret.yaml

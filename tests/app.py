@@ -1,47 +1,86 @@
 import io
-import os
-import uuid
-import mimetypes
+from wsgiref.validate import InputWrapper
+
+from unittest.mock import call, MagicMock, mock_open
 
 import msgpack
+import pytest
 
 import falcon
+from falcon import testing
+
+import look.app
+import look.images
 
 
-class Resource:
+@pytest.fixture
+def mock_store():
+    return MagicMock()
 
-    _CHUNK_SIZE_BYTES = 4096
 
-    # The resource object must now be initialized with a path used during POST
-    def __init__(self, storage_path):
-        self._storage_path = storage_path
+@pytest.fixture
+def client(mock_store):
+    app = look.app.create_app(mock_store)
+    return testing.TestClient(app)
 
-    # This is the method we implemented before
-    def on_get(self, req, resp):
-        doc = {
-            'images': [
-                {
-                    'href': '/images/1eaf6ef1-7f2d-4ecc-a8d5-6e8adba7cc0e.png'
-                }
-            ]
-        }
 
-        resp.data = msgpack.packb(doc, use_bin_type=True)
-        resp.content_type = falcon.MEDIA_MSGPACK
-        resp.status = falcon.HTTP_200
+def test_list_images(client):
+    doc = {
+        'images': [
+            {
+                'href': '/images/1eaf6ef1-7f2d-4ecc-a8d5-6e8adba7cc0e.png'
+            }
+        ]
+    }
 
-    def on_post(self, req, resp):
-        ext = mimetypes.guess_extension(req.content_type)
-        name = '{uuid}{ext}'.format(uuid=uuid.uuid4(), ext=ext)
-        image_path = os.path.join(self._storage_path, name)
+    response = client.simulate_get('/images')
+    result_doc = msgpack.unpackb(response.content, raw=False)
 
-        with io.open(image_path, 'wb') as image_file:
-            while True:
-                chunk = req.stream.read(self._CHUNK_SIZE_BYTES)
-                if not chunk:
-                    break
+    assert result_doc == doc
+    assert response.status == falcon.HTTP_OK
 
-                image_file.write(chunk)
 
-        resp.status = falcon.HTTP_201
-        resp.location = '/images/' + name
+# With clever composition of fixtures, we can observe what happens with
+# the mock injected into the image resource.
+def test_post_image(client, mock_store):
+    file_name = 'fake-image-name.xyz'
+
+    # We need to know what ImageStore method will be used
+    mock_store.save.return_value = file_name
+    image_content_type = 'image/xyz'
+
+    response = client.simulate_post(
+        '/images',
+        body=b'some-fake-bytes',
+        headers={'content-type': image_content_type}
+    )
+
+    assert response.status == falcon.HTTP_CREATED
+    assert response.headers['location'] == '/images/{}'.format(file_name)
+    saver_call = mock_store.save.call_args
+
+    # saver_call is a unittest.mock.call tuple. It's first element is a
+    # tuple of positional arguments supplied when calling the mock.
+    assert isinstance(saver_call[0][0], InputWrapper)
+    assert saver_call[0][1] == image_content_type
+    def test_saving_image(monkeypatch):
+    # This still has some mocks, but they are more localized and do not
+    # have to be monkey-patched into standard library modules (always a
+    # risky business).
+    mock_file_open = mock_open()
+
+    fake_uuid = '123e4567-e89b-12d3-a456-426655440000'
+    def mock_uuidgen():
+        return fake_uuid
+
+    fake_image_bytes = b'fake-image-bytes'
+    fake_request_stream = io.BytesIO(fake_image_bytes)
+    storage_path = 'fake-storage-path'
+    store = look.images.ImageStore(
+        storage_path,
+        uuidgen=mock_uuidgen,
+        fopen=mock_file_open
+    )
+
+    assert store.save(fake_request_stream, 'image/png') == fake_uuid + '.png'
+    assert call().write(fake_image_bytes) in mock_file_open.mock_calls

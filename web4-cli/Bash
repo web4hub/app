@@ -1,0 +1,8 @@
+web4 init my-app
+web4 validate
+web4 generate docker
+web4 generate workflow
+web4 generate kubernetes
+web4 deploy
+web4 doctor
+web4 upgrade

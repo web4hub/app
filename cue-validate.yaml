@@ -1,0 +1,15 @@
+name: Validate CUE
+
+on: [push]
+
+jobs:
+  cue:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v46
+
+      - uses: cue-lang/setup-cue@v1
+
+      - run: cue fmt ./...
+      - run: cue vet ./...
